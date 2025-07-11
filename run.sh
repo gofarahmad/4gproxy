@@ -8,9 +8,9 @@ APP_PORT=5000
 NGINX_PORT=80
 CONFIG_DIR="/etc/$APP_NAME"
 GIT_REPO="https://github.com/gofarahmad/nodeproxy.git"
-MODEM_IP="192.168.11.1"  # Default modem IP
+MODEM_IP="192.168.11.1"
 MODEM_API="http://$MODEM_IP/api"
-PROXY_PORTS="7001-7999"  # Port range for proxy
+PROXY_PORTS="7001-7999"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Script ini harus dijalankan sebagai root."
@@ -23,7 +23,7 @@ apt install -y \
   nginx python3-pip python3-venv nodejs npm \
   net-tools vnstat curl ufw iptables-persistent \
   netplan.io network-manager usb-modeswitch modemmanager \
-  ping netstat jq
+  iputils-ping iproute2 jq
 
 echo "[2] Install 3proxy jika belum ada..."
 if ! command -v 3proxy &>/dev/null; then
@@ -35,11 +35,8 @@ if ! command -v 3proxy &>/dev/null; then
 fi
 
 echo "[3] Setup direktori dan permission..."
-mkdir -p $APP_DIR $WEB_ROOT $CONFIG_DIR/config $CONFIG_DIR/modem
+mkdir -p $APP_DIR $WEB_ROOT $CONFIG_DIR/config
 chown -R www-data:www-data $APP_DIR $WEB_ROOT $CONFIG_DIR
-mkdir -p /var/log/$APP_NAME
-touch /var/log/$APP_NAME/{modem.log,proxy.log,rotate.log}
-chown -R www-data:www-data /var/log/$APP_NAME
 
 echo "[4] Clone atau update repo nodeproxy..."
 if [ -d "$APP_DIR/.git" ]; then
@@ -52,7 +49,7 @@ echo "[5] Setup backend Python..."
 cd $APP_DIR/backend
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt gunicorn requests beautifulsoup4
+pip install -r requirements.txt gunicorn
 
 cat > $CONFIG_DIR/config/production.ini <<EOF
 [app]
@@ -251,7 +248,7 @@ systemctl start modem-rotate.timer
 echo "[13] Atur firewall (UFW)..."
 ufw allow $NGINX_PORT/tcp
 ufw allow 22/tcp
-ufw allow ${PROXY_PORTS/tcp}
+ufw allow ${PROXY_PORTS}/tcp
 ufw --force enable
 
 echo "[14] Konfigurasi netplan hybrid..."
