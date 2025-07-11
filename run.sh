@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Ignore CD/DVD errors
+if [ -b /dev/sr0 ]; then
+    echo "[INFO] Menonaktifkan pembacaan CD/DVD drive sementara..."
+    eject /dev/sr0 >/dev/null 2>&1 || true
+    echo 1 > /sys/block/sr0/device/delete 2>/dev/null || true
+fi
+
 APP_NAME="nodeproxy"
 APP_DIR="/opt/$APP_NAME"
 WEB_ROOT="/var/www/$APP_NAME"
