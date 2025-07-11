@@ -1,13 +1,6 @@
 #!/bin/bash
 set -e
 
-# Ignore CD/DVD errors
-if [ -b /dev/sr0 ]; then
-    echo "[INFO] Menonaktifkan pembacaan CD/DVD drive sementara..."
-    eject /dev/sr0 >/dev/null 2>&1 || true
-    echo 1 > /sys/block/sr0/device/delete 2>/dev/null || true
-fi
-
 APP_NAME="nodeproxy"
 APP_DIR="/opt/$APP_NAME"
 WEB_ROOT="/var/www/$APP_NAME"
@@ -30,25 +23,38 @@ apt install -y \
   nginx python3-pip python3-venv nodejs npm \
   net-tools vnstat curl ufw iptables-persistent \
   netplan.io network-manager usb-modeswitch modemmanager \
-  iputils-ping iproute2 jq
+  iputils-ping iproute2 jq build-essential git
 
-echo "[2] Install 3proxy jika belum ada..."
+echo "[2] Cek dan install 3proxy..."
 if ! command -v 3proxy &>/dev/null; then
+  echo "--> 3proxy belum terinstall, proses instalasi..."
   cd /opt
+  
+  if [ -d "3proxy" ]; then
+    echo "--> Folder 3proxy sudah ada, membersihkan..."
+    rm -rf 3proxy
+  fi
+  
   git clone https://github.com/z3APA3A/3proxy.git
   cd 3proxy
   make -f Makefile.Linux
   cp src/3proxy /usr/local/bin/
+  echo "--> 3proxy berhasil diinstall"
+else
+  echo "--> 3proxy sudah terinstall, lanjut ke tahap berikutnya..."
 fi
 
 echo "[3] Setup direktori dan permission..."
-mkdir -p $APP_DIR $WEB_ROOT $CONFIG_DIR/config
-chown -R www-data:www-data $APP_DIR $WEB_ROOT $CONFIG_DIR
+mkdir -p $APP_DIR $WEB_ROOT $CONFIG_DIR/config $CONFIG_DIR/modem /var/log/$APP_NAME
+chown -R www-data:www-data $APP_DIR $WEB_ROOT $CONFIG_DIR /var/log/$APP_NAME
 
 echo "[4] Clone atau update repo nodeproxy..."
 if [ -d "$APP_DIR/.git" ]; then
-  cd $APP_DIR && git pull
+  echo "--> Repository sudah ada, melakukan update..."
+  cd $APP_DIR
+  git pull
 else
+  echo "--> Mengclone repository baru..."
   git clone $GIT_REPO $APP_DIR
 fi
 
@@ -56,8 +62,10 @@ echo "[5] Setup backend Python..."
 cd $APP_DIR/backend
 python3 -m venv venv
 source venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt gunicorn
 
+echo "[6] Buat config production.ini..."
 cat > $CONFIG_DIR/config/production.ini <<EOF
 [app]
 port = $APP_PORT
@@ -73,6 +81,7 @@ api_url = $MODEM_API
 rotate_interval = 300
 EOF
 
+echo "[7] Buat systemd service..."
 cat > /etc/systemd/system/$APP_NAME.service <<EOF
 [Unit]
 Description=NodeProxy Backend
@@ -90,14 +99,13 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-echo "[6] Build frontend React..."
+echo "[8] Build frontend React..."
 cd $APP_DIR/frontend
 npm install
 npm run build
 cp -r dist/* $WEB_ROOT/
-chown -R www-data:www-data $WEB_ROOT
 
-echo "[7] Konfigurasi NGINX..."
+echo "[9] Konfigurasi NGINX..."
 cat > /etc/nginx/sites-available/$APP_NAME <<EOF
 server {
     listen $NGINX_PORT;
@@ -131,7 +139,7 @@ EOF
 ln -sf /etc/nginx/sites-available/$APP_NAME /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 
-echo "[8] Setup modem control..."
+echo "[10] Setup modem control..."
 cat > $APP_DIR/backend/modem.py <<EOF
 import requests
 from bs4 import BeautifulSoup
@@ -199,7 +207,7 @@ class ModemController:
             return None
 EOF
 
-echo "[9] Setup 3proxy configuration..."
+echo "[11] Setup 3proxy configuration..."
 cat > $CONFIG_DIR/3proxy.cfg <<EOF
 daemon
 maxconn 200
@@ -213,7 +221,7 @@ allow * * * 80-8080
 proxy -n -a -p$PROXY_PORTS
 EOF
 
-echo "[10] Setup auto-rotation service..."
+echo "[12] Setup auto-rotation service..."
 cat > /etc/systemd/system/modem-rotate.service <<EOF
 [Unit]
 Description=Modem IP Rotation Service
@@ -231,7 +239,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 EOF
 
-echo "[11] Setup rotation timer..."
+echo "[13] Setup rotation timer..."
 cat > /etc/systemd/system/modem-rotate.timer <<EOF
 [Unit]
 Description=Timer for Modem IP Rotation
@@ -244,7 +252,7 @@ OnUnitActiveSec=5min
 WantedBy=timers.target
 EOF
 
-echo "[12] Restart semua service..."
+echo "[14] Restart semua service..."
 nginx -t
 systemctl daemon-reload
 systemctl enable $APP_NAME modem-rotate.timer
@@ -252,16 +260,14 @@ systemctl restart $APP_NAME
 systemctl restart nginx
 systemctl start modem-rotate.timer
 
-echo "[13] Atur firewall (UFW)..."
+echo "[15] Atur firewall (UFW)..."
 ufw allow $NGINX_PORT/tcp
 ufw allow 22/tcp
 ufw allow ${PROXY_PORTS}/tcp
 ufw --force enable
 
-echo "[14] Konfigurasi netplan hybrid..."
-NETPLAN_FILE="/etc/netplan/99-nodeproxy.yaml"
-
-cat > $NETPLAN_FILE <<EOF
+echo "[16] Konfigurasi netplan hybrid..."
+cat > /etc/netplan/99-nodeproxy.yaml <<EOF
 network:
   version: 2
   renderer: NetworkManager
